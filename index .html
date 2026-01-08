@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+<title>サプライズ・インベーダー（CLEARで自動YouTube）</title>
+<style>
+  :root{ --bg:#0b1020; --panel:#0f1733; --line:rgba(255,255,255,.14); --txt:rgba(255,255,255,.92); }
+  body{ margin:0; background:var(--bg); color:var(--txt);
+        font-family:system-ui,-apple-system,Segoe UI,Roboto,"Noto Sans JP",sans-serif;
+        -webkit-tap-highlight-color: transparent; }
+  .wrap{ max-width:900px; margin:0 auto; padding:10px; }
+  h1{ font-size:16px; margin:6px 0 8px; text-align:center; }
+  .panel{
+    background:linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.02));
+    border:1px solid var(--line); border-radius:16px; padding:10px;
+  }
+  canvas{
+    width:100%;
+    height:auto;
+    background:#050814;
+    border-radius:14px;
+    border:1px solid var(--line);
+    display:block;
+    touch-action:none;
+  }
+  .hud{
+    display:flex; justify-content:space-between; align-items:center;
+    gap:8px; flex-wrap:wrap; margin-top:8px;
+  }
+  .hud .left, .hud .right{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .badge{ font-size:12px; opacity:.9; padding:6px 10px; border:1px solid var(--line); border-radius:999px; background:rgba(255,255,255,.06); }
+  button{
+    appearance:none; border:1px solid var(--line); background:rgba(255,255,255,.08);
+    color:var(--txt); padding:10px 12px; border-radius:12px; font-size:14px; cursor:pointer;
+  }
+  button:active{ transform:scale(.98); }
+  .hint{ font-size:12px; opacity:.85; text-align:center; line-height:1.6; margin-top:8px; }
+  .touchpad{
+    margin-top:10px; display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px;
+  }
+  .touchpad button{ padding:14px 10px; font-weight:700; }
+  .touchpad .shoot{ background:#2b6cff; border-color:rgba(255,255,255,.22); }
+
+  /* CLEAR 演出 overlay */
+  .overlay{ position:fixed; inset:0; background:rgba(0,0,0,.78);
+            display:none; align-items:center; justify-content:center; z-index:50; padding:14px; }
+  .card{ width:min(900px,100%); background:var(--panel); border:1px solid var(--line);
+         border-radius:18px; padding:16px; box-shadow:0 20px 60px rgba(0,0,0,.55); text-align:center; }
+  .card h2{ margin:0 0 8px; font-size:20px; }
+  .card p{ margin:0 0 10px; opacity:.92; }
+  .big{ font-size:34px; font-weight:900; letter-spacing:.03em; margin:4px 0 10px; }
+  .bar{
+    height:10px; border-radius:999px; overflow:hidden;
+    border:1px solid rgba(255,255,255,.14); background:rgba(255,255,255,.06);
+    width:min(520px, 100%); margin:10px auto 0;
+  }
+  .bar > div{ height:100%; width:0%; background:#2b6cff; transition:width 1s linear; }
+  a.linkbtn{ display:inline-block; text-decoration:none; background:#2b6cff; color:#fff;
+             padding:12px 14px; border-radius:12px; margin-top:12px; }
+  .small{ font-size:12px; opacity:.82; margin-top:8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🎁 サプライズ・インベーダー（CLEARで1秒演出→自動YouTube）</h1>
+
+  <div class="panel">
+    <canvas id="game" width="900" height="520"></canvas>
+
+    <div class="hud">
+      <div class="left">
+        <span class="badge" id="scoreBadge">Score: 0</span>
+        <span class="badge" id="stateBadge">READY</span>
+      </div>
+      <div class="right">
+        <button id="btnStart">スタート / リスタート</button>
+        <button id="btnPause">一時停止</button>
+        <button id="btnSound">🔈 音ON</button>
+      </div>
+    </div>
+
+    <div class="touchpad">
+      <button id="btnLeft">◀ 左</button>
+      <button id="btnShoot" class="shoot">● 発射</button>
+      <button id="btnRight">右 ▶</button>
+    </div>
+
+    <div class="hint">
+      PC：← → で移動 / スペースで発射<br>
+      スマホ：下の「左・発射・右」ボタンで操作（Chrome推奨）<br>
+      ※音は「音ON」を押すと有効になります（スマホ仕様）
+    </div>
+  </div>
+</div>
+
+<!-- CLEAR演出 → 自動遷移 -->
+<div class="overlay" id="overlay">
+  <div class="card">
+    <div class="big">CLEAR! 🎉</div>
+    <h2 id="surTitle">サプライズへ移動します…</h2>
+    <p id="surText">1秒後にYouTubeを開きます</p>
+
+    <div class="bar"><div id="progress"></div></div>
+
+    <a class="linkbtn" id="surLink" href="#" target="_blank" rel="noopener">
+      ▶ うまく飛ばない時はここをタップ
+    </a>
+
+    <div class="small">※スマホで自動遷移がブロックされた場合でも、このボタンで必ず開けます</div>
+  </div>
+</div>
+
+<script>
+(() => {
+  // ====== ここだけ変更：飛ばしたいYouTube/URL ======
+  const SURPRISE = {
+    url: "https://youtube.com/shorts/sKZD_jw0HIY?si=-C7HLOReYrqVrNNi/" // ←あなたのYouTubeリンクに変更
+  };
+  // ===============================================
+
+  const canvas = document.getElementById("game");
+  const ctx = canvas.getContext("2d");
+
+  const scoreBadge = document.getElementById("scoreBadge");
+  const stateBadge = document.getElementById("stateBadge");
+
+  const btnStart = document.getElementById("btnStart");
+  const btnPause = document.getElementById("btnPause");
+  const btnSound = document.getElementById("btnSound");
+
+  const btnLeft = document.getElementById("btnLeft");
+  const btnRight = document.getElementById("btnRight");
+  const btnShoot = document.getElementById("btnShoot");
+
+  const overlay = document.getElementById("overlay");
+  const surLink = document.getElementById("surLink");
+  const progress = document.getElementById("progress");
+
+  const W = canvas.width, H = canvas.height;
+
+  // === 音（WebAudio）===
+  let audioCtx=null, master=null, bgmInterval=null, soundEnabled=false;
+
+  function ensureAudio(){
+    if(audioCtx) return true;
+    try{
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      master = audioCtx.createGain();
+      master.gain.value = 0.20;
+      master.connect(audioCtx.destination);
+      return true;
+    }catch(e){
+      alert("この端末/ブラウザでは音が使えないかも…（Chrome推奨）");
+      return false;
+    }
+  }
+
+  function beep(freq=440, dur=0.07, type="sine", vol=0.8){
+    if(!soundEnabled || !audioCtx) return;
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = type;
+    o.frequency.value = freq;
+    g.gain.value = 0.0001;
+    o.connect(g);
+    g.connect(master);
+
+    const t = audioCtx.currentTime;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(vol, t+0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t+dur);
+
+    o.start(t);
+    o.stop(t + dur + 0.02);
+  }
+
+  const sfxShoot = ()=>beep(880, 0.05, "square", 0.5);
+  const sfxHit   = ()=>{ beep(520, 0.07, "triangle", 0.7); setTimeout(()=>beep(780, 0.06, "triangle", 0.45), 40); };
+  const sfxHurt  = ()=>beep(180, 0.12, "sawtooth", 0.8);
+  const sfxClear = ()=>{
+    beep(523.25,0.10,"triangle",0.7);
+    setTimeout(()=>beep(659.25,0.10,"triangle",0.7),110);
+    setTimeout(()=>beep(783.99,0.13,"triangle",0.75),230);
+  };
+
+  function startBGM(){
+    if(!soundEnabled || !audioCtx) return;
+    stopBGM();
+    let step = 0;
+    const notes = [392, 392, 440, 392, 330, 349, 392, 523, 494, 440, 392, 349, 330, 294];
+    bgmInterval = setInterval(()=>{
+      const f = notes[step % notes.length];
+      beep(f, 0.06, "sine", 0.18);
+      step++;
+    }, 220);
+  }
+  function stopBGM(){
+    if(bgmInterval){ clearInterval(bgmInterval); bgmInterval = null; }
+  }
+
+  function toggleSound(){
+    if(!ensureAudio()) return;
+    if(audioCtx.resume) audioCtx.resume();
+    soundEnabled = !soundEnabled;
+    btnSound.textContent = soundEnabled ? "🔊 音ON（再生中）" : "🔈 音OFF";
+    if(soundEnabled && running && !paused && !gameOver && !cleared) startBGM();
+    else stopBGM();
+  }
+
+  // === Game state ===
+  let running=false, paused=false, gameOver=false, cleared=false;
+  let score=0;
+
+  const player = { x: W/2, y: H-55, w: 54, h: 14, speed: 7 };
+  const bullets = [];
+  const enemyBullets = [];
+
+  let enemies=[];
+  const rows=4, cols=9;
+  const enemy = { w: 48, h: 22, padX: 14, padY: 14, startX: 90, startY: 70 };
+  let enemyDir=1, enemySpeed=1.0, enemyStepDown=18;
+  let goal = rows*cols;
+
+  const keys = { left:false, right:false, shoot:false };
+  let shootCooldown=0;
+
+  function resetGame(){
+    bullets.length=0; enemyBullets.length=0; enemies=[];
+    score=0; goal=rows*cols;
+    enemyDir=1; enemySpeed=1.0; shootCooldown=0;
+    player.x=W/2;
+    paused=false; gameOver=false; cleared=false;
+    overlay.style.display="none";
+    progress.style.width="0%";
+
+    for(let r=0;r<rows;r++){
+      for(let c=0;c<cols;c++){
+        enemies.push({ x: enemy.startX + c*(enemy.w+enemy.padX),
+                      y: enemy.startY + r*(enemy.h+enemy.padY),
+                      w:enemy.w, h:enemy.h, alive:true });
+      }
+    }
+    updateHUD();
+  }
+
+  function updateHUD(){
+    scoreBadge.textContent = `Score: ${score} / ${goal}`;
+    stateBadge.textContent =
+      !running ? "READY" :
+      paused ? "PAUSED" :
+      gameOver ? "GAME OVER" :
+      cleared ? "CLEAR!" : "PLAYING";
+  }
+
+  function rectHit(ax,ay,aw,ah,bx,by,bw,bh){
+    return ax < bx+bw && ax+aw > bx && ay < by+bh && ay+ah > by;
+  }
+  function centerText(text, y, size){
+    ctx.fillStyle="rgba(255,255,255,.92)";
+    ctx.font=`bold ${size}px system-ui`;
+    ctx.textAlign="center";
+    ctx.fillText(text, W/2, y);
+    ctx.textAlign="left";
+  }
+  function roundRect(x,y,w,h,r){
+    ctx.beginPath();
+    ctx.moveTo(x+r,y);
+    ctx.arcTo(x+w,y,x+w,y+h,r);
+    ctx.arcTo(x+w,y+h,x,y+h,r);
+    ctx.arcTo(x,y+h,x,y,r);
+    ctx.arcTo(x,y,x+w,y,r);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    ctx.fillStyle="#050814"; ctx.fillRect(0,0,W,H);
+
+    ctx.globalAlpha=0.3;
+    for(let i=0;i<50;i++){
+      const sx=(i*97)%W, sy=(i*53)%H;
+      ctx.fillStyle="white";
+      ctx.fillRect(sx,sy,2,2);
+    }
+    ctx.globalAlpha=1;
+
+    ctx.fillStyle="rgba(255,255,255,.85)";
+    ctx.font="14px system-ui";
+    ctx.fillText(`Score: ${score} / ${goal}`, 16, 24);
+
+    ctx.fillStyle="#77d1ff";
+    roundRect(player.x-player.w/2, player.y, player.w, player.h, 7);
+    ctx.fillStyle="#b7f3ff";
+    roundRect(player.x-12, player.y-9, 24, 11, 6);
+
+    ctx.fillStyle="#fff";
+    bullets.forEach(b => ctx.fillRect(b.x-2, b.y, 4, 12));
+
+    ctx.fillStyle="#ff9aa7";
+    enemyBullets.forEach(b => ctx.fillRect(b.x-2, b.y, 4, 12));
+
+    enemies.forEach(e=>{
+      if(!e.alive) return;
+      ctx.fillStyle="#9cff8f";
+      roundRect(e.x,e.y,e.w,e.h,7);
+      ctx.fillStyle="rgba(0,0,0,.35)";
+      ctx.fillRect(e.x+10,e.y+7,6,6);
+      ctx.fillRect(e.x+e.w-16,e.y+7,6,6);
+    });
+
+    if(!running) centerText("スタートで開始", H/2-20, 28);
+    if(paused) centerText("一時停止中", H/2-20, 30);
+    if(gameOver) centerText("GAME OVER（スタートで再挑戦）", H/2-20, 22);
+    if(cleared) centerText("CLEAR! 🎉", H/2-30, 36);
+  }
+
+  function goYouTube(){
+    // 自動遷移（スマホでブロックされる場合があるのでリンクも用意）
+    location.href = SURPRISE.url;
+  }
+
+  function showClearAndAutoGo(){
+    cleared = true;
+    updateHUD();
+    sfxClear();
+    stopBGM();
+
+    surLink.href = SURPRISE.url;
+    overlay.style.display = "flex";
+
+    // 1秒演出バー
+    requestAnimationFrame(()=>{ progress.style.width = "100%"; });
+
+    // 1秒後に自動遷移
+    setTimeout(goYouTube, 1000);
+  }
+
+  function update(){
+    if(!running || paused || gameOver || cleared) return;
+
+    if(keys.left) player.x -= player.speed;
+    if(keys.right) player.x += player.speed;
+    player.x = Math.max(player.w/2, Math.min(W-player.w/2, player.x));
+
+    if(shootCooldown>0) shootCooldown--;
+    if(keys.shoot && shootCooldown===0){
+      bullets.push({x:player.x, y:player.y-12, vy:-9});
+      shootCooldown=10;
+      sfxShoot();
+    }
+
+    for(let i=bullets.length-1;i>=0;i--){
+      bullets[i].y += bullets[i].vy;
+      if(bullets[i].y < -20) bullets.splice(i,1);
+    }
+    for(let i=enemyBullets.length-1;i>=0;i--){
+      enemyBullets[i].y += enemyBullets[i].vy;
+      if(enemyBullets[i].y > H+20) enemyBullets.splice(i,1);
+    }
+
+    let minX=Infinity, maxX=-Infinity;
+    enemies.forEach(e=>{
+      if(!e.alive) return;
+      e.x += enemyDir*enemySpeed;
+      minX=Math.min(minX,e.x);
+      maxX=Math.max(maxX,e.x+e.w);
+    });
+    if(minX < 20 || maxX > W-20){
+      enemyDir*=-1;
+      enemies.forEach(e=>{ if(e.alive) e.y += enemyStepDown; });
+      enemySpeed += 0.15;
+    }
+
+    if(Math.random() < 0.03){
+      const alive=enemies.filter(e=>e.alive);
+      if(alive.length){
+        const s=alive[(Math.random()*alive.length)|0];
+        enemyBullets.push({x:s.x+s.w/2, y:s.y+s.h, vy:5});
+      }
+    }
+
+    for(let i=bullets.length-1;i>=0;i--){
+      const b=bullets[i];
+      for(const e of enemies){
+        if(!e.alive) continue;
+        if(rectHit(b.x-2,b.y,4,12,e.x,e.y,e.w,e.h)){
+          e.alive=false;
+          bullets.splice(i,1);
+          score++;
+          updateHUD();
+          sfxHit();
+          break;
+        }
+      }
+    }
+
+    for(let i=enemyBullets.length-1;i>=0;i--){
+      const b=enemyBullets[i];
+      if(rectHit(b.x-2,b.y,4,12, player.x-player.w/2, player.y, player.w, player.h)){
+        enemyBullets.splice(i,1);
+        gameOver=true;
+        updateHUD();
+        sfxHurt();
+        stopBGM();
+      }
+    }
+
+    if(enemies.some(e=>e.alive && (e.y+e.h) > player.y)){
+      gameOver=true;
+      updateHUD();
+      sfxHurt();
+      stopBGM();
+    }
+
+    if(score >= goal){
+      showClearAndAutoGo();
+    }
+  }
+
+  function loop(){
+    update();
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  // keyboard
+  window.addEventListener("keydown",(e)=>{
+    if(e.key==="ArrowLeft") keys.left=true;
+    if(e.key==="ArrowRight") keys.right=true;
+    if(e.code==="Space"){ keys.shoot=true; e.preventDefault(); }
+  });
+  window.addEventListener("keyup",(e)=>{
+    if(e.key==="ArrowLeft") keys.left=false;
+    if(e.key==="ArrowRight") keys.right=false;
+    if(e.code==="Space") keys.shoot=false;
+  });
+
+  // touch/mouse/pointer hold
+  const hold = (el, onDown, onUp) => {
+    const down = (e)=>{ e.preventDefault(); onDown(); };
+    const up   = (e)=>{ e.preventDefault(); onUp(); };
+
+    el.addEventListener("pointerdown", down, {passive:false});
+    el.addEventListener("pointerup", up, {passive:false});
+    el.addEventListener("pointercancel", up, {passive:false});
+    el.addEventListener("pointerleave", up, {passive:false});
+
+    el.addEventListener("touchstart", down, {passive:false});
+    el.addEventListener("touchend", up, {passive:false});
+    el.addEventListener("touchcancel", up, {passive:false});
+
+    el.addEventListener("mousedown", down);
+    window.addEventListener("mouseup", up);
+  };
+
+  hold(btnLeft,  ()=>{ keys.left=true; keys.right=false; }, ()=>{ keys.left=false; });
+  hold(btnRight, ()=>{ keys.right=true; keys.left=false; }, ()=>{ keys.right=false; });
+  hold(btnShoot, ()=>{ keys.shoot=true; }, ()=>{ keys.shoot=false; });
+
+  btnStart.addEventListener("click", ()=>{
+    resetGame();
+    running=true;
+    updateHUD();
+    if(soundEnabled){ startBGM(); }
+  });
+
+  btnPause.addEventListener("click", ()=>{
+    if(!running) return;
+    paused=!paused;
+    updateHUD();
+    if(soundEnabled){
+      if(paused) stopBGM(); else startBGM();
+    }
+  });
+
+  btnSound.addEventListener("click", toggleSound);
+
+  // 初期
+  resetGame();
+  updateHUD();
+  loop();
+})();
+</script>
+</body>
+</html>
